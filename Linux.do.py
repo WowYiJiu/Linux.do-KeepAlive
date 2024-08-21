@@ -11,6 +11,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import (
+    TimeoutException,
+    NoSuchElementException,
+    WebDriverException,
+)
 import shutil
 
 logger = logging.getLogger()
@@ -27,16 +32,22 @@ console_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
 
-USERNAME = os.getenv("LINUXDO_USERNAME")
-PASSWORD = os.getenv("LINUXDO_PASSWORD")
+USERNAME = os.getenv("LINUXDO_USERNAME").splitlines()
+PASSWORD = os.getenv("LINUXDO_PASSWORD").splitlines()
 SCROLL_DURATION = int(os.getenv("SCROLL_DURATION", 0))
+VIEW_COUNT = int(os.getenv("VIEW_COUNT", 1000))
 HOME_URL = os.getenv("HOME_URL", "https://linux.do/")
 CONNECT_URL = os.getenv("CONNECT_URL", "https://connect.linux.do/")
 
+user_count = len(USERNAME)
+
 browse_count = 0
 connect_info = ""
-
+like_count = 0
+account_info = []
 missing_configs = []
+chrome_options = ""
+chromedriver_path = ""
 
 if not USERNAME:
     missing_configs.append("USERNAME")
@@ -46,6 +57,12 @@ if not PASSWORD:
 if missing_configs:
     logging.error(f"缺少必要配置: {', '.join(missing_configs)}，请在环境变量中设置。")
     exit(1)
+
+if user_count != len(PASSWORD):
+    logging.error("用户名和密码的数量不一致，请检查环境变量设置。")
+    exit(1)
+
+logging.info(f"共找到 {user_count} 个账户")
 
 
 def load_send():
@@ -65,6 +82,9 @@ class LinuxDoBrowser:
     def __init__(self) -> None:
         logging.info("启动 Selenium")
 
+        global chrome_options
+        global chromedriver_path
+
         chrome_options = webdriver.ChromeOptions()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
@@ -77,12 +97,6 @@ class LinuxDoBrowser:
             logging.error("chromedriver 未找到，请确保已安装并配置正确的路径。")
             exit(1)
 
-        self.driver = webdriver.Chrome(
-            service=Service(chromedriver_path), options=chrome_options
-        )
-
-        logging.info("导航到LINUX DO首页")
-        self.driver.get(HOME_URL)
         logging.info("初始化完成")
 
     def simulate_typing(self, element, text, typing_speed=0.1, random_delay=True):
@@ -95,7 +109,7 @@ class LinuxDoBrowser:
 
     def login(self) -> bool:
         try:
-            logging.info("--- 开始尝试登录 ---")
+            logging.info(f"--- 开始尝试登录：{self.username}---")
 
             login_button = WebDriverWait(self.driver, 20).until(
                 EC.element_to_be_clickable(
@@ -107,14 +121,14 @@ class LinuxDoBrowser:
             username_field = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#login-account-name"))
             )
-            self.simulate_typing(username_field, USERNAME)
+            self.simulate_typing(username_field, self.username)
 
             password_field = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located(
                     (By.CSS_SELECTOR, "#login-account-password")
                 )
             )
-            self.simulate_typing(password_field, PASSWORD)
+            self.simulate_typing(password_field, self.password)
 
             submit_button = WebDriverWait(self.driver, 20).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "#login-button"))
@@ -168,6 +182,15 @@ class LinuxDoBrowser:
                 if is_pinned:
                     logging.info(f"跳过置顶的帖子：{topic.text.strip()}")
                     continue
+                views_element = parent_element.find_element(
+                    By.CSS_SELECTOR, ".num.views .number"
+                )
+                views_title = views_element.get_attribute("title")
+
+                views_count_str = views_title.split("此话题已被浏览 ")[1].split(" 次")[
+                    0
+                ]
+                views_count = int(views_count_str.replace(",", ""))
                 article_title = topic.text.strip()
                 logging.info(f"打开第 {idx + 1}/{len(topics)} 个帖子 ：{article_title}")
                 article_url = topic.get_attribute("href")
@@ -188,6 +211,12 @@ class LinuxDoBrowser:
                 finally:
                     browse_count += 1
                     start_time = time.time()
+                    if views_count > VIEW_COUNT:
+                        logging.info(f"📈 当前帖子浏览量为{views_count}")
+                        logging.info(
+                            f"🥳 当前帖子浏览量大于设定值{VIEW_COUNT}，开始进行点赞操作"
+                        )
+                        self.click_like()
                     scroll_duration = random.uniform(5, 10)
                     # screenshot_interval = 2  # 设置截图间隔时间，单位是秒
                     # screenshot_count = 0
@@ -222,27 +251,86 @@ class LinuxDoBrowser:
             logging.error(f"处理帖子时出错: {e}")
 
     def run(self):
-        start_time = time.time()
-        try:
-            if not self.login():
-                return
-            self.click_topic()
-            logging.info("🎉恭喜你，帖子浏览全部完成")
-        except Exception as e:
-            logging.error(f"运行过程中出错: {e}")
-        finally:
-            end_time = time.time()
-            spend_time = int((end_time - start_time) // 60)
-            self.print_connect_info()
-            self.driver.quit()
-            send = load_send()
-            if callable(send):
-                send(
-                    "Linux.do浏览帖子",
-                    f"本次共浏览{browse_count}个帖子\n共用时{spend_time}分钟\n{connect_info}",
+        global browse_count
+        global connect_info
+        global like_count
+        for i in range(user_count):
+            start_time = time.time()
+            self.username = USERNAME[i]
+            self.password = PASSWORD[i]
+
+            self.driver = webdriver.Chrome(
+                service=Service(chromedriver_path), options=chrome_options
+            )
+            logging.info(f"▶️▶️▶️  开始执行第{i+1}个账号")
+            logging.info("导航到LINUX DO首页")
+            self.driver.get(HOME_URL)
+
+            try:
+                if not self.login():
+                    logging.error(f"{self.username} 登录失败")
+                    continue
+                self.click_topic()
+                logging.info(f"🎉恭喜：{self.username}，帖子浏览全部完成")
+                self.print_connect_info()
+                self.logout()
+            except Exception as e:
+                logging.error(f"运行过程中出错: {e}")
+            finally:
+                end_time = time.time()
+                spend_time = int((end_time - start_time) // 60)
+                account_info.append(
+                    {
+                        "username": self.username,
+                        "browse_count": browse_count,
+                        "like_count": like_count,
+                        "spend_time": spend_time,
+                        "connect_info": connect_info,
+                    }
                 )
+                browse_count = 0
+                like_count = 0
+                connect_info = ""
+                self.driver.quit()
+
+        logging.info("所有账户处理完毕")
+        summary = ""
+        for info in account_info:
+            summary += (
+                f"用户：{info['username']}\n\n"
+                f"本次共浏览 {info['browse_count']} 个帖子\n"
+                f"共点赞{info['like_count']} 个帖子\n"
+                f"共用时 {info['spend_time']} 分钟\n"
+                f"{info['connect_info']}\n\n"
+            )
+        send = load_send()
+        if callable(send):
+            send("Linux.do浏览帖子", summary)
+        else:
+            print("\n加载通知服务失败")
+
+    def click_like(self):
+        try:
+            global like_count
+            like_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, ".btn-toggle-reaction-like")
+                )
+            )
+
+            if "移除此赞" in like_button.get_attribute("title"):
+                logging.info("该帖子已点赞，跳过点赞操作。")
             else:
-                print("\n加载通知服务失败")
+                self.driver.execute_script("arguments[0].click();", like_button)
+                like_count += 1
+                logging.info("点赞帖子成功")
+
+        except TimeoutException:
+            logging.error("点赞操作失败：点赞按钮定位超时")
+        except WebDriverException as e:
+            logging.error(f"点赞操作失败: {e}")
+        except Exception as e:
+            logging.error(f"未知错误导致点赞操作失败: {e}")
 
     def print_connect_info(self):
         self.driver.execute_script("window.open('');")
@@ -330,6 +418,36 @@ class LinuxDoBrowser:
 
         self.driver.close()
         self.driver.switch_to.window(self.driver.window_handles[0])
+
+    def logout(self):
+        try:
+            user_menu_button = self.driver.find_element(By.ID, "toggle-current-user")
+            user_menu_button.click()
+            profile_tab_button = WebDriverWait(self.driver, 20).until(
+                EC.element_to_be_clickable((By.ID, "user-menu-button-profile"))
+            )
+            profile_tab_button.click()
+
+            logout_button = WebDriverWait(self.driver, 20).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "li.logout button.profile-tab-btn")
+                )
+            )
+            logout_button.click()
+            self.driver.refresh()
+
+            elements = self.driver.find_elements(
+                By.CSS_SELECTOR, ".header-buttons .login-button"
+            )
+            if elements:
+                logging.info(f"{self.username}登出成功")
+            else:
+                logging.info(f"{self.username}登出失败")
+
+        except (TimeoutException, NoSuchElementException) as e:
+            logging.error(f"登出失败，可能由于元素未找到或超时: {e}")
+        except Exception as e:
+            logging.error(f"登出过程中发生错误: {e}")
 
 
 if __name__ == "__main__":
