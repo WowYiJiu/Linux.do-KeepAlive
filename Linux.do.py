@@ -187,10 +187,14 @@ class LinuxDoBrowser:
                 )
                 views_title = views_element.get_attribute("title")
 
-                views_count_str = views_title.split("此话题已被浏览 ")[1].split(" 次")[
-                    0
-                ]
-                views_count = int(views_count_str.replace(",", ""))
+                if "此话题已被浏览 " in views_title and " 次" in views_title:
+                    views_count_str = views_title.split("此话题已被浏览 ")[1].split(
+                        " 次"
+                    )[0]
+                    views_count = int(views_count_str.replace(",", ""))
+                else:
+                    logging.warning(f"无法解析浏览次数，跳过该帖子: {views_title}")
+                    continue
                 article_title = topic.text.strip()
                 logging.info(f"打开第 {idx + 1}/{len(topics)} 个帖子 ：{article_title}")
                 article_url = topic.get_attribute("href")
