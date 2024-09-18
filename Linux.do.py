@@ -32,31 +32,36 @@ console_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
 
-USERNAME = os.getenv("LINUXDO_USERNAME").splitlines()
-PASSWORD = os.getenv("LINUXDO_PASSWORD").splitlines()
+missing_configs = []
+
+username_env = os.getenv("LINUXDO_USERNAME")
+password_env = os.getenv("LINUXDO_PASSWORD")
+
+if not username_env:
+    missing_configs.append("环境变量 'LINUXDO_USERNAME' 未设置或为空")
+if not password_env:
+    missing_configs.append("环境变量 'LINUXDO_PASSWORD' 未设置或为空")
+
+if missing_configs:
+    logging.error(f"缺少必要配置: {', '.join(missing_configs)}，请在环境变量中设置。")
+    exit(1)
+
+USERNAME = [line.strip() for line in username_env.splitlines() if line.strip()]
+PASSWORD = [line.strip() for line in password_env.splitlines() if line.strip()]
 SCROLL_DURATION = int(os.getenv("SCROLL_DURATION", 0))
 VIEW_COUNT = int(os.getenv("VIEW_COUNT", 1000))
 HOME_URL = os.getenv("HOME_URL", "https://linux.do/")
 CONNECT_URL = os.getenv("CONNECT_URL", "https://connect.linux.do/")
 
-user_count = len(USERNAME)
 
 browse_count = 0
 connect_info = ""
 like_count = 0
 account_info = []
-missing_configs = []
 chrome_options = ""
 chromedriver_path = ""
 
-if not USERNAME:
-    missing_configs.append("USERNAME")
-if not PASSWORD:
-    missing_configs.append("PASSWORD")
-
-if missing_configs:
-    logging.error(f"缺少必要配置: {', '.join(missing_configs)}，请在环境变量中设置。")
-    exit(1)
+user_count = len(USERNAME)
 
 if user_count != len(PASSWORD):
     logging.error("用户名和密码的数量不一致，请检查环境变量设置。")
@@ -97,7 +102,7 @@ class LinuxDoBrowser:
             logging.error("chromedriver 未找到，请确保已安装并配置正确的路径。")
             exit(1)
 
-        logging.info("初始化完成")
+        self.driver = None
 
     def simulate_typing(self, element, text, typing_speed=0.1, random_delay=True):
         for char in text:
@@ -258,60 +263,60 @@ class LinuxDoBrowser:
         global browse_count
         global connect_info
         global like_count
+
         for i in range(user_count):
             start_time = time.time()
             self.username = USERNAME[i]
             self.password = PASSWORD[i]
 
-            self.driver = webdriver.Chrome(
-                service=Service(chromedriver_path), options=chrome_options
-            )
-            logging.info(f"▶️▶️▶️  开始执行第{i+1}个账号")
-            logging.info("导航到LINUX DO首页")
-            self.driver.get(HOME_URL)
+            logging.info(f"▶️▶️▶️  开始执行第{i+1}个账号: {self.username}")
 
             try:
+                self.driver = webdriver.Chrome(
+                    service=Service(chromedriver_path), options=chrome_options
+                )
+                logging.info("导航到 LINUX DO 首页")
+                self.driver.get(HOME_URL)
+
                 if not self.login():
                     logging.error(f"{self.username} 登录失败")
                     continue
+
                 self.click_topic()
-                logging.info(f"🎉恭喜：{self.username}，帖子浏览全部完成")
+                logging.info(f"🎉 恭喜：{self.username}，帖子浏览全部完成")
                 self.print_connect_info()
+
                 self.logout()
+
+            except WebDriverException as e:
+                logging.error(f"WebDriver 初始化失败: {e}")
+                logging.info("请尝试重新搭建青龙面板或换个机器运行")
+                exit(1)
             except Exception as e:
                 logging.error(f"运行过程中出错: {e}")
             finally:
-                end_time = time.time()
-                spend_time = int((end_time - start_time) // 60)
-                account_info.append(
-                    {
-                        "username": self.username,
-                        "browse_count": browse_count,
-                        "like_count": like_count,
-                        "spend_time": spend_time,
-                        "connect_info": connect_info,
-                    }
-                )
-                browse_count = 0
-                like_count = 0
-                connect_info = ""
-                self.driver.quit()
+                if self.driver is not None:
+                    self.driver.quit()
+
+            end_time = time.time()
+            spend_time = int((end_time - start_time) // 60)
+
+            account_info.append(
+                {
+                    "username": self.username,
+                    "browse_count": browse_count,
+                    "like_count": like_count,
+                    "spend_time": spend_time,
+                    "connect_info": connect_info,
+                }
+            )
+
+            # 重置状态
+            browse_count = 0
+            like_count = 0
+            connect_info = ""
 
         logging.info("所有账户处理完毕")
-        summary = ""
-        for info in account_info:
-            summary += (
-                f"用户：{info['username']}\n\n"
-                f"本次共浏览 {info['browse_count']} 个帖子\n"
-                f"共点赞{info['like_count']} 个帖子\n"
-                f"共用时 {info['spend_time']} 分钟\n"
-                f"{info['connect_info']}\n\n"
-            )
-        send = load_send()
-        if callable(send):
-            send("Linux.do浏览帖子", summary)
-        else:
-            print("\n加载通知服务失败")
 
     def click_like(self):
         try:
