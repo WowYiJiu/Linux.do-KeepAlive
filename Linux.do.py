@@ -317,6 +317,20 @@ class LinuxDoBrowser:
             connect_info = ""
 
         logging.info("所有账户处理完毕")
+        summary = ""
+        for info in account_info:
+            summary += (
+                f"用户：{info['username']}\n\n"
+                f"本次共浏览 {info['browse_count']} 个帖子\n"
+                f"共点赞{info['like_count']} 个帖子\n"
+                f"共用时 {info['spend_time']} 分钟\n"
+                f"{info['connect_info']}\n\n"
+            )
+        send = load_send()
+        if callable(send):
+            send("Linux.do浏览帖子", summary)
+        else:
+            print("\n加载通知服务失败")
 
     def click_like(self):
         try:
