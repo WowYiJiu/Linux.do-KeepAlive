@@ -1,12 +1,25 @@
 - 本脚本适用于浏览[LINUX DO](https://linux.do/)帖子和点赞，支持多账号
 ### 使用教程
 >测试环境 Python 3.10、selenium 4.23.1
-1. 青龙面板安装Python依赖`selenium` Linux依赖`chromium`、`chromium-chromedriver`
-2. 将Linux.do.py和notify.py放在青龙面板同一文件夹下
+
+**1. 青龙面板配置镜像加速 (系统设置->依赖设置)**
+- Python 软件包镜像源 `http://mirrors.aliyun.com/pypi/simple/`
+- Linux 软件包镜像源 `https://mirrors.aliyun.com`
+  
+**2. 青龙面板依赖 (依赖管理->创建依赖)**
+- 选择 **Python3** 类型, 输入名称: `selenium`
+- 选择 **Linux** 类型, 分别创建 `chromium` 和 `chromium-chromedriver`
+
+**3. 引入脚本 (脚本管理->右上角创建)**
+- 根目录新建 `Linux.do.py`和`notify.py` 两个文件
+- 拷贝两个文件对应内容
+  
+**4. 配置定时任务 (定时任务->创建任务)**
 - 任务名：Linux.do浏览帖子
 - 命令：task Linux.do.py
 - 定时：0 7 * * *
 >定时规则请自行修改
+
 >不容易啊，全靠始皇的Shared
 ### 环境变量（多账号换行）
 ```
